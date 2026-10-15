@@ -127,7 +127,7 @@ jobs:
         run: npm ci
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps
-      # Scope fijo y rapido: ejecuta solo el feature principal del flujo de compra.
+      # Ejecuta todos los features Cucumber con el formatter de resumen y reportes.
       - name: Run Cucumber tests
         run: node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js --config cucumber.ci.json
         env:
