@@ -1,4 +1,6 @@
-# QA Automation con Playwright + TypeScript + Cucumber
+# TareaQaTeamPlaywright
+
+## QA Automation con Playwright + TypeScript + Cucumber
 
 Curso completo de automatización de pruebas — **8 clases · 3 horas cada una** (en la clase 8: 45 min de clase + 2 h 15 min de trabajo guiado, con entrega hasta 5 días después)
 
