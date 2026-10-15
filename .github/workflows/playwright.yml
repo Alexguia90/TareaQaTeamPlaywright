@@ -61,11 +61,23 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
+      - name: Check Slack webhook - Playwright
+        id: slack-config
+        if: ${{ !cancelled() }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Notificacion a Slack al finalizar (pase o falle)
       # Requisito: agregar SLACK_WEBHOOK_URL como secret en Settings > Secrets del repo
       - name: Notify Slack - Playwright
-        # Se ejecuta siempre, incluso si los tests fallaron
-        if: ${{ !cancelled() }}
+        # Se omite sin webhook para que la notificacion no falle el job.
+        if: ${{ !cancelled() && steps.slack-config.outputs.configured == 'true' }}
         # Action oficial de Slack para enviar mensajes via webhook
         uses: slackapi/slack-github-action@v2.1.0
         with:
@@ -132,10 +144,22 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore 
 
+      - name: Check Slack webhook - Cucumber
+        id: slack-config
+        if: ${{ !cancelled() }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Notificacion a Slack al finalizar (pase o falle)
       - name: Notify Slack - Cucumber
-        # Se ejecuta siempre, incluso si los tests fallaron
-        if: ${{ !cancelled() }}
+        # Se omite sin webhook para que la notificacion no falle el job.
+        if: ${{ !cancelled() && steps.slack-config.outputs.configured == 'true' }}
         # Action oficial de Slack para enviar mensajes via webhook
         uses: slackapi/slack-github-action@v2.1.0
         with:
