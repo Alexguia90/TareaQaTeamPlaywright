@@ -1,4 +1,4 @@
-name: Cucumber BDD Tests
+name: Ejecutando test
 
 on:
   # Se ejecuta al hacer push en estas ramas
@@ -9,17 +9,7 @@ on:
     branches: [main]
   # Permite ejecutar manualmente desde GitHub Actions
   # Solo aparece el boton "Run workflow" si este archivo esta en la rama main
-  # El selector de RAMA ya lo pone GitHub automaticamente (arriba de estos inputs)
   workflow_dispatch:
-    inputs:
-      feature_path:
-        description: 'Ruta/carpeta de .feature a correr (Cucumber). Vacio = todos.'
-        type: string
-        default: 'tests/features/**/*.feature'
-      tag:
-        description: 'Tag de Cucumber para filtrar escenarios (opcional, ej: @smoke)'
-        type: string
-        default: ''
 
 # Si se hace push varias veces seguidas al mismo branch/PR, cancela la corrida anterior
 # que siga en curso (evita gastar minutos de Actions en corridas ya obsoletas)
@@ -28,8 +18,97 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # JOB unico: Tests BDD con Cucumber (.feature). En main solo se corre este flujo
-  # (el job de Playwright .spec.ts se removio de este archivo a proposito).
+  # JOB 1: Tests con el runner de Playwright (.spec.ts) - corre EN PARALELO con cucumber
+  playwright:
+    name: Playwright Tests
+    timeout-minutes: 60      # cancela el job si supera 60 minutos
+    runs-on: ubuntu-latest   # maquina virtual Linux en la nube de GitHub
+    # Los secrets del Environment solo son accesibles si el job declara el environment
+    environment: development
+    steps:
+      # Descarga el codigo del repositorio en la maquina virtual
+      - name: Checkout code
+        uses: actions/checkout@v4
+      # Instala Node.js en su version LTS mas reciente
+      # cache: npm -> reutiliza node_modules entre corridas usando package-lock.json como llave
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      # npm ci es mas estricto que npm install, usa package-lock.json exacto
+      - name: Install dependencies
+        run: npm ci
+      # Instala Chromium + librerias del sistema necesarias en Linux
+      # --with-deps: el OS Linux no trae esas librerias por defecto
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+      # Scope fijo y rapido: ejecuta solo el spec POM en Chromium.
+      - name: Run Playwright tests
+        run: npx playwright test tests/clase-05/01-pom-basico.spec.ts --project=chromium
+        env:
+          BASE_URL: ${{ vars.BASE_URL || secrets.BASE_URL }}
+          SAUCEDEMO_USERNAME: ${{ vars.SAUCEDEMO_USERNAME || secrets.SAUCEDEMO_USERNAME }}
+          SAUCEDEMO_PASSWORD: ${{ vars.SAUCEDEMO_PASSWORD || secrets.SAUCEDEMO_PASSWORD }}
+      # Sube el reporte como artefacto descargable desde la pestana Actions
+      # !cancelled() -> sube aunque los tests fallen (para ver que paso)
+      # retention-days: 30 -> se elimina automaticamente despues de 30 dias
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+
+      - name: Check Slack webhook - Playwright
+        id: slack-config
+        if: ${{ !cancelled() }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Notificacion a Slack al finalizar (pase o falle)
+      # Requisito: agregar SLACK_WEBHOOK_URL como secret en Settings > Secrets del repo
+      - name: Notify Slack - Playwright
+        # Se omite sin webhook para que la notificacion no falle el job.
+        if: ${{ !cancelled() && steps.slack-config.outputs.configured == 'true' }}
+        # Action oficial de Slack para enviar mensajes via webhook
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          # URL del Incoming Webhook de Slack (guardada como secret para no exponerla)
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Tipo de webhook: incoming-webhook es el mas simple, no requiere bot token
+          webhook-type: incoming-webhook
+          # Payload en formato Slack Block Kit (JSON)
+          # "text"   -> texto fallback (notificaciones push del movil o previews)
+          # "blocks" -> tarjetas visuales con formato en el canal de Slack
+          # "type: section" -> bloque de texto con markdown de Slack (mrkdwn)
+          # mrkdwn permite: *negrita*, `codigo`, <url|texto>, emojis :white_check_mark:
+          # job.status == 'success' muestra checkmark verde, cualquier otro estado muestra X roja
+          # github.ref_name  -> nombre de la rama que disparo el workflow (ej: main)
+          # github.sha       -> hash del commit (identifica exactamente que codigo se probo)
+          # github.run_id    -> ID del run, permite armar el link directo a Actions
+          payload: |
+            {
+              "text": "Playwright Tests: ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Playwright Tests* ${{ job.status == 'success' && ':white_check_mark: PASSED' || ':x: FAILED' }}\n*Branch:* `${{ github.ref_name }}`\n*Commit:* `${{ github.sha }}`\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Ver resultado en Actions>"
+                  }
+                }
+              ]
+            }
+
+  # JOB 2: Tests BDD con Cucumber (.feature) - corre EN PARALELO con playwright
   cucumber:
     name: Cucumber Tests
     timeout-minutes: 60
@@ -48,23 +127,13 @@ jobs:
         run: npm ci
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps
-      # Ejecuta los escenarios Gherkin con el runner de Cucumber.
-      # En dispatch manual se puede elegir un feature/carpeta puntual y un tag opcional;
-      # en push/PR (sin inputs) corre todos los .feature, sin filtro de tag.
+      # Ejecuta todos los features Cucumber con el formatter de resumen y reportes.
       - name: Run Cucumber tests
-        run: |
-          FEATURE_PATH="${{ inputs.feature_path }}"
-          TAG="${{ inputs.tag }}"
-          [ -z "$FEATURE_PATH" ] && FEATURE_PATH="tests/features/**/*.feature"
-          if [ -n "$TAG" ]; then
-            node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js "$FEATURE_PATH" --tags "$TAG"
-          else
-            node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js "$FEATURE_PATH"
-          fi
+        run: node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js --config cucumber.ci.json
         env:
-          BASE_URL: ${{ secrets.BASE_URL }}
-          SAUCEDEMO_USERNAME: ${{ secrets.SAUCEDEMO_USERNAME }}
-          SAUCEDEMO_PASSWORD: ${{ secrets.SAUCEDEMO_PASSWORD }}
+          BASE_URL: ${{ vars.BASE_URL || secrets.BASE_URL }}
+          SAUCEDEMO_USERNAME: ${{ vars.SAUCEDEMO_USERNAME || secrets.SAUCEDEMO_USERNAME }}
+          SAUCEDEMO_PASSWORD: ${{ vars.SAUCEDEMO_PASSWORD || secrets.SAUCEDEMO_PASSWORD }}
       # Sube el reporte HTML de Cucumber como artefacto descargable
       - name: Upload Cucumber report
         uses: actions/upload-artifact@v4
@@ -73,12 +142,24 @@ jobs:
           name: cucumber-report
           path: cucumber-report.html
           retention-days: 30
-          if-no-files-found: ignore
+          if-no-files-found: ignore 
+
+      - name: Check Slack webhook - Cucumber
+        id: slack-config
+        if: ${{ !cancelled() }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # Notificacion a Slack al finalizar (pase o falle)
       - name: Notify Slack - Cucumber
-        # Se ejecuta siempre, incluso si los tests fallaron
-        if: ${{ !cancelled() }}
+        # Se omite sin webhook para que la notificacion no falle el job.
+        if: ${{ !cancelled() && steps.slack-config.outputs.configured == 'true' }}
         # Action oficial de Slack para enviar mensajes via webhook
         uses: slackapi/slack-github-action@v2.1.0
         with:
@@ -108,29 +189,3 @@ jobs:
                 }
               ]
             }
-
-      # Notificacion a Microsoft Teams al finalizar (pase o falle)
-      # Se omite sola si el secret TEAMS_WEBHOOK_URL no esta configurado
-      - name: Notify Teams - Cucumber
-        if: ${{ !cancelled() && env.TEAMS_WEBHOOK_URL != '' }}
-        env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-        run: |
-          curl -sS -H "Content-Type: application/json" -d '{
-            "@type": "MessageCard",
-            "@context": "http://schema.org/extensions",
-            "summary": "Cucumber Tests",
-            "themeColor": "${{ job.status == 'success' && '00B294' || 'C4314B' }}",
-            "title": "Cucumber Tests - ${{ job.status }}",
-            "sections": [{
-              "facts": [
-                { "name": "Branch", "value": "${{ github.ref_name }}" },
-                { "name": "Commit", "value": "${{ github.sha }}" }
-              ]
-            }],
-            "potentialAction": [{
-              "@type": "OpenUri",
-              "name": "Ver resultado en Actions",
-              "targets": [{ "os": "default", "uri": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" }]
-            }]
-          }' "$TEAMS_WEBHOOK_URL"
