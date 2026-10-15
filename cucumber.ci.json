@@ -1,0 +1,11 @@
+{
+  "default": {
+    "import": ["tests/step-definitions/**/*.ts", "tests/support/**/*.ts"],
+    "paths": ["tests/features/flujo-de-compra.feature"],
+    "format": ["progress", "summary", "html:cucumber-report.html", "allure-cucumberjs/reporter"],
+    "formatOptions": {
+      "resultsDir": "allure-results"
+    },
+    "publishQuiet": true
+  }
+}

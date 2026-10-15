@@ -129,7 +129,7 @@ jobs:
         run: npx playwright install --with-deps
       # Scope fijo y rapido: ejecuta solo el feature principal del flujo de compra.
       - name: Run Cucumber tests
-        run: node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js tests/features/flujo-de-compra.feature
+        run: node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js --config cucumber.ci.json
         env:
           BASE_URL: ${{ vars.BASE_URL || secrets.BASE_URL }}
           SAUCEDEMO_USERNAME: ${{ vars.SAUCEDEMO_USERNAME || secrets.SAUCEDEMO_USERNAME }}
